@@ -3,20 +3,26 @@
 #include <OBD2UART.h>
 
 struct item {
-  String name;
-  float value;
-  float max;
-  int PID;
+  String name; // name of the item
+  float current; // current value of the item
+  float max; // maximum value observed so far
+
+  unsigned long long avg;
+  unsigned long int avgCount;
+
+  int PID; // PID to collect
+  int dp; // number of decimal places to present the number with
 };
 
 //configuration
+const bool DEBUG = true;
 const int buttonPin = 2;
 const int targetFPS = 3; //3 hz
 const int modes = 3;
 item items[3] = {
-  {"RPM", 0, 0, PID_RPM},
-  {"MPH", 0, 0, PID_SPEED},
-  {"Fuel", 0, 0, PID_FUEL_LEVEL}
+  {"RPM", 0, 0, 0, 0, PID_RPM, 0},
+  {"MPH", 0, 0, 0, 0, PID_SPEED, 0},
+  {"Fuel", 0, 0, 0, 0, PID_FUEL_LEVEL, 0}
 };
 
 //hardware
@@ -66,27 +72,32 @@ void display() {
   item i = items[mode];
 
   lcd.clear();
-  lcd.setCursor(0, 0);
 
+  lcd.setCursor(0, 0);
   lcd.print(i.name + " : ");
-  lcd.print(i.value);
+  lcd.print(i.current, i.dp);
   lcd.setCursor(0, 1);
   lcd.print("MAX : ");
-  lcd.print(i.max);
+  lcd.print(i.max, i.dp);
 }
 
 void setup() {
   // init the button
   pinMode(buttonPin, INPUT);
-  // start communication with OBD-II adapter
-  obd.begin();
   //init the LCD
   lcd.begin(16, 2);
   //lcd.backlight();
   lcd.setCursor(0, 0);
-  lcd.print("INITIALISING");
 
-  while (!obd.init());
+  if (!DEBUG) {
+    lcd.print("INITIALISING");
+    // start communication with OBD-II adapter
+    obd.begin();
+    while (!obd.init());
+  } else {
+    lcd.print("DEBUG MODE");
+    delay(1000);
+  }
 
   lcd.clear();
 
@@ -101,11 +112,15 @@ void loop() {
 
   //get values from obd
   for (int i = 0; i < modes; i++) {
-  int value = 0;
-    if (obd.readPID(items[i].PID, value)) {
-      items[i].value = value;
-      if (items[i].max < value) {
-        items[i].max = value;
+  int val = 0;
+    if (!DEBUG && obd.readPID(items[i].PID, val)) {
+
+      items[i].current = val;
+      items[i].avgCount++;
+      items[i].avg = items[i].avg + ((val - items[i].avg) / items[i].avgCount);
+
+      if (items[i].max < val) {
+        items[i].max = val;
       }
     }
   }
