@@ -2,13 +2,23 @@
 #include <LiquidCrystal_I2C.h>
 #include <OBD2UART.h>
 
+
+//TODO
+//support short term averages (5 seconds for Fuel %)
+//support resetting averages
+//range
+//graphs
+//allow for different types of items
+//the below is a raw item
+//need support for sub items such as MPG
+
 struct item {
   String name; // name of the item
   float current; // current value of the item
   float max; // maximum value observed so far
 
-  unsigned long long avg;
-  unsigned long int avgCount;
+  float avg;
+  unsigned int avgCount;
 
   int PID; // PID to collect
   int dp; // number of decimal places to present the number with
@@ -22,7 +32,7 @@ const int modes = 3;
 item items[3] = {
   {"RPM", 0, 0, 0, 0, PID_RPM, 0},
   {"MPH", 0, 0, 0, 0, PID_SPEED, 0},
-  {"Fuel", 0, 0, 0, 0, PID_FUEL_LEVEL, 0}
+  {"FUE", 0, 0, 0, 0, PID_FUEL_LEVEL, 0}
 };
 
 //hardware
@@ -74,11 +84,13 @@ void display() {
   lcd.clear();
 
   lcd.setCursor(0, 0);
-  lcd.print(i.name + " : ");
-  lcd.print(i.current, i.dp);
+  lcd.print(i.name + " CUR MAX AVG");
   lcd.setCursor(0, 1);
-  lcd.print("MAX : ");
+  lcd.print(i.current, i.dp);
+  lcd.print(" ");
   lcd.print(i.max, i.dp);
+  lcd.print(" ");
+  lcd.print(i.avg, i.dp);
 }
 
 void setup() {
