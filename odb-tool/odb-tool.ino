@@ -1,19 +1,26 @@
 //configuration
 #define DISPLAY_X 128
-#define DISPLAY_Y 56 //64
-#define TARGET_FPS 60 //hz
+#define GRAPH_Y 56 //64
+#define DISPLAY_Y 64 //64
+#define TARGET_FPS 120 //hz
 #define SERIAL_ON
-//#define OBD_ON
+#define OBD_ON
 
 #include <U8g2lib.h>
 
 #ifdef OBD_ON
-#include <OBD2UART.h>
+#include <OBD.h>
 
 COBD obd;
 
 int obdGetValue(int type) {
-  return 9000;
+  
+  int value;
+  if (obd.readPID(type, value)) {
+    return value;
+  }
+
+  return 0; //oh no
 }
 
 #endif
@@ -27,7 +34,7 @@ int scaleValueToScreenY(float val, float min, float max) {
   // min = 0    -> 0
   // max = 9000 -> 64
 
-  return DISPLAY_Y - ((val / max) * DISPLAY_Y);
+  return GRAPH_Y - ((val / max) * GRAPH_Y);
 }
 
 class item {
@@ -44,22 +51,10 @@ public:
     count = 0;
 
     for (int i = 0; i < DISPLAY_X; i++) {
-      //this->graph[i] = DISPLAY_Y;
-      this->graph[i] = DISPLAY_Y * (1 + sin((float(i) / float(DISPLAY_X)) * 2 * M_PI)) / 2;
+      this->graph[i] = GRAPH_Y;
+      //this->graph[i] = GRAPH_Y * (1 + sin((float(i) / float(DISPLAY_X)) * 2 * M_PI)) / 2;
     }
   }
-  
-  void draw() {    
-    u8g2.firstPage();
-    do {
-      for (int x = 0; x < DISPLAY_X; x++) {
-        u8g2.drawPixel(x, this->graph[x]);  
-      }
-  
-      u8g2.setCursor(0, 64);
-      u8g2.print(u8x8_u16toa(currentValue, 4)); //maybe cast to string?
-    } while ( u8g2.nextPage() );
-  }  
 
   void addValue(float val) {
     
@@ -83,6 +78,9 @@ item items[1] = {};
 
 //item that is currently displayed
 int currentItem = 0;
+
+//times
+unsigned long lastFrame = millis();
 
 void setup(void) {
 
@@ -110,7 +108,24 @@ void setup(void) {
 #endif
 }
 
-unsigned long lastFrame = millis();
+void draw() {    
+  u8g2.firstPage();
+  do {
+    for (int x = 0; x < DISPLAY_X; x++) {
+      u8g2.drawPixel(x, items[currentItem].graph[x]);  
+    }
+
+    u8g2.setCursor(0, DISPLAY_Y);
+    
+    u8g2.print(u8x8_u16toa(items[currentItem].currentValue, 4));
+    u8g2.print(" ");
+    u8g2.print(u8x8_u16toa(items[currentItem].average, 4));
+    u8g2.print(" ");
+    u8g2.print(millis());
+    
+  } while ( u8g2.nextPage() );
+} 
+
 void loop(void) {
 
   //display if we arent going to overshoot the target fps
@@ -121,17 +136,15 @@ void loop(void) {
     Serial.println(now - lastFrame);
 #endif
 
-    int val = 0;
+    int val = random(9000);
 
 #ifdef OBD_ON
-
     val = obdGetValue(PID_RPM);
-    
 #endif
 
-    items[currentItem].addValue(random(9000));
+    items[currentItem].addValue(val);
     
-    items[currentItem].draw();
+    draw();
 
     lastFrame = now;
   }
