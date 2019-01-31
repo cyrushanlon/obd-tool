@@ -4,7 +4,6 @@
 #define GRAPH_Y 56 //64
 #define DISPLAY_Y 64 //64
 #define TARGET_FPS 120 //hz
-#define SERIAL_ON
 #define ITEM_COUNT 2
 //#define OBD_ON
 
@@ -144,7 +143,7 @@ unsigned long lastSubSwap = 0;
 
 void setup(void) {
 
-#ifdef SERIAL_ON
+#ifndef OBD_ON
   //connect to Serial monitor over USB
   Serial.begin(9600);
   Serial.println("START");
@@ -177,14 +176,14 @@ void loop(void) {
   unsigned long now = millis();
   if (now - lastFrame > (1000 / TARGET_FPS)) {
 
-#ifdef SERIAL_ON
+#ifndef OBD_ON
     Serial.println(now - lastFrame);
 #endif
 
     //collect values from obd
     for (int i = 0; i < ITEM_COUNT; i++) {
 #ifdef OBD_ON
-      int val = obdGetValue(it->PID);
+      int val = obdGetValue(items[i]->pid);
 #else
       int val = random(items[i]->maxValue);  
 #endif
