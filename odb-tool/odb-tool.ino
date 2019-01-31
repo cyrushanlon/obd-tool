@@ -1,15 +1,23 @@
 //configuration
-#define DISPLAY_X 128
+#define BAR_WIDTH 4
+#define DISPLAY_X 128 - BAR_WIDTH
 #define GRAPH_Y 56 //64
 #define DISPLAY_Y 64 //64
 #define TARGET_FPS 120 //hz
 #define SERIAL_ON
+#define ITEM_COUNT 2
 //#define OBD_ON
 
 #include <U8g2lib.h>
 #include <OBD2UART.h>
 
+//hardware
 COBD obd;
+U8G2_SH1106_128X64_NONAME_1_4W_HW_SPI u8g2(U8G2_R0, 10, 9, 8);
+
+//item that is currently displayed
+int currentItem = 0;
+int subItem = 0;
 
 int obdGetValue(int type) {
   
@@ -20,9 +28,6 @@ int obdGetValue(int type) {
 
   return 0; //oh no
 }
-
-//hardware
-U8G2_SH1106_128X64_NONAME_1_4W_HW_SPI u8g2(U8G2_R0, 10, 9, 8);
 
 int scaleValueToScreenY(float val, float min, float max) {
 
@@ -35,19 +40,37 @@ int scaleValueToScreenY(float val, float min, float max) {
 
 class item {
 public:
+
+  bool active;
+
   char* name;
   int pid;
+  float minValue;
+  float maxValue;
+
+  virtual void addValue(float val);
+  virtual void draw();
+  virtual item(char* name, int pid, int minValue, int maxValue) {
+    active = true;
+
+    this->name = name;
+    this->pid = pid;
+    this->minValue = minValue;
+    this->maxValue = maxValue;
+  }
+};
+
+class graphItem : public item {
+public:
+  
   float average;
   float currentValue;
+  
   uint64_t  count;
 
   int graph[DISPLAY_X];
   
-  item() {}
-  item(char* name, int pid) {
-
-    this->name = name;
-    this->pid = pid;
+  graphItem(char* name, int pid, int minValue, int maxValue) : item(name, pid, minValue, maxValue) {
 
     this->average = 0;
     this->count = 0;
@@ -69,18 +92,51 @@ public:
     }
     
     //add new value
-    this->graph[DISPLAY_X - 1] = scaleValueToScreenY(val, 0, 9000);
     this->currentValue = val;
+    this->graph[DISPLAY_X - 1] = scaleValueToScreenY(val, this->minValue, this->maxValue);
   }
-  
+
+  void draw() {    
+    for (int x = 0; x < DISPLAY_X; x++) {
+      u8g2.drawPixel(x, this->graph[x]);  
+    }
+
+    u8g2.setCursor(0, DISPLAY_Y);
+    if (subItem == 0) {
+      u8g2.print(u8x8_u16toa(this->currentValue, 4));
+      u8g2.print(" ");
+    } else if (subItem == 1) {
+      u8g2.print(u8x8_u16toa(this->average, 4));
+      u8g2.print(" ");
+    } else if (subItem == 2) {
+      u8g2.print(millis());
+      u8g2.print(" ");
+    }
+  } 
+};
+
+class barItem : public item {
+public:
+  int height;
+
+  barItem(char* name, int pid, int minValue, int maxValue) : item(name, pid, minValue, maxValue){
+
+    this->height = 0;
+  }
+
+  void addValue(float val){
+
+    this->height = scaleValueToScreenY(val, this->minValue, this->maxValue);
+  }
+
+  void draw(){
+
+    u8g2.drawBox(DISPLAY_X, GRAPH_Y - this->height, BAR_WIDTH, this->height);
+  }
 };
 
 //holds item definitions
-item items[2] = {};
-
-//item that is currently displayed
-int currentItem = 0;
-int subItem = 0;
+item* items[ITEM_COUNT] = {};
 
 //times
 unsigned long lastFrame = 0;
@@ -104,8 +160,9 @@ void setup(void) {
   } while ( u8g2.nextPage() );
 
   //config init
-  items[0] = item("RPM", PID_RPM);
-  items[1] = item("MPH", PID_SPEED);
+  items[0] = new graphItem("RPM", PID_RPM, 0, 9000);
+  //items[1] = new graphItem("KMH", PID_SPEED, 0, 210);
+  items[1] = new barItem("Load", PID_ENGINE_LOAD, 0, 100);
   
 #ifdef OBD_ON
   //obd init 
@@ -114,39 +171,7 @@ void setup(void) {
 #endif
 }
 
-void draw() {    
-  u8g2.firstPage();
-  do {
-    for (int x = 0; x < DISPLAY_X; x++) {
-      u8g2.drawPixel(x, items[currentItem].graph[x]);  
-    }
-
-    u8g2.setCursor(0, DISPLAY_Y);
-    if (subItem == 0) {
-      u8g2.print(u8x8_u16toa(items[currentItem].currentValue, 4));
-      u8g2.print(" ");
-    } else if (subItem == 1) {
-      u8g2.print(u8x8_u16toa(items[currentItem].average, 4));
-      u8g2.print(" ");
-    } else if (subItem == 2) {
-      u8g2.print(millis());
-      u8g2.print(" ");
-    }
-    
-  } while ( u8g2.nextPage() );
-} 
-
 void loop(void) {
-
-//collect values from obd
-  for (int i = 0; i < 2; i++) {
-#ifdef OBD_ON
-    int val = obdGetValue(it->PID);
-#else
-    int val = random(9000);  
-#endif
-    items[i].addValue(val);
-  }
 
   //display if we arent going to overshoot the target fps
   unsigned long now = millis();
@@ -155,8 +180,24 @@ void loop(void) {
 #ifdef SERIAL_ON
     Serial.println(now - lastFrame);
 #endif
+
+    //collect values from obd
+    for (int i = 0; i < ITEM_COUNT; i++) {
+#ifdef OBD_ON
+      int val = obdGetValue(it->PID);
+#else
+      int val = random(items[i]->maxValue);  
+#endif
+      items[i]->addValue(val);
+    }
     
-    draw();
+    u8g2.firstPage();
+    do {
+      for (int i = 0; i < ITEM_COUNT; i++) {
+        if (items[i]->active) 
+          items[i]->draw();
+      }
+    } while ( u8g2.nextPage() );
 
     //swap through sub displays
     lastSubSwap += (now - lastFrame);
