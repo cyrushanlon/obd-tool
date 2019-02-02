@@ -1,9 +1,9 @@
 //configuration
 #define BAR_WIDTH 4
 #define DISPLAY_X 128 - BAR_WIDTH
-#define GRAPH_Y 56 //64
+#define GRAPH_Y 55 //64
 #define DISPLAY_Y 64 //64
-#define TARGET_FPS 120 //hz
+#define TARGET_FPS 1000 / 60 //hz
 #define ITEM_COUNT 2
 //#define OBD_ON
 
@@ -12,13 +12,9 @@
 
 //hardware
 COBD obd;
-U8G2_SH1106_128X64_NONAME_1_4W_HW_SPI u8g2(U8G2_R0, 10, 9, 8);
+U8G2_SH1106_128X64_NONAME_F_4W_HW_SPI u8g2(U8G2_R2, 10, 7, 8); //rotation, cs, dc [, reset]
 
-//item that is currently displayed
-int currentItem = 0;
-int subItem = 0;
-
-int obdGetValue(int type) {
+int obdGetValue(byte type) {
   
   int value;
   if (obd.readPID(type, value)) {
@@ -30,10 +26,6 @@ int obdGetValue(int type) {
 
 int scaleValueToScreenY(float val, float min, float max) {
 
-  // val = 5000
-  // min = 0    -> 0
-  // max = 9000 -> 64
-
   return GRAPH_Y - ((val / max) * GRAPH_Y);
 }
 
@@ -42,20 +34,22 @@ public:
 
   bool active;
 
-  char* name;
-  int pid;
+  const char* name;
   float minValue;
   float maxValue;
 
+  int pid;
+
   virtual void addValue(float val);
   virtual void draw();
-  virtual item(char* name, int pid, int minValue, int maxValue) {
+  item(const char* name, int pid) {
     active = true;
+
+    this->minValue = 0;
+    this->maxValue = 0;
 
     this->name = name;
     this->pid = pid;
-    this->minValue = minValue;
-    this->maxValue = maxValue;
   }
 };
 
@@ -68,8 +62,9 @@ public:
   uint64_t  count;
 
   int graph[DISPLAY_X];
+  float values[DISPLAY_X];
   
-  graphItem(char* name, int pid, int minValue, int maxValue) : item(name, pid, minValue, maxValue) {
+  graphItem(const char* name, int pid) : item(name, pid) {
 
     this->average = 0;
     this->count = 0;
@@ -88,29 +83,55 @@ public:
     // move all values back and reinsert 128
     for (int i = 0; i < DISPLAY_X - 1; i++) {
       this->graph[i] = this->graph[i + 1];
+      this->values[i] = this->values[i + 1];
     }
     
     //add new value
     this->currentValue = val;
+    this->values[DISPLAY_X - 1] = val;
+
+    //scale values if there is a min or max value change
+    bool resize = false;
+    if (val < this->minValue) { this->minValue = val; resize = true;}
+    else if (val > this->maxValue) { this->maxValue = val; resize = true;}
+    if (resize) {
+      for (int i = 0; i < DISPLAY_X - 1; i++) {
+        this->graph[i] = scaleValueToScreenY(this->values[i], this->minValue, this->maxValue);
+      }
+    }
+
     this->graph[DISPLAY_X - 1] = scaleValueToScreenY(val, this->minValue, this->maxValue);
   }
 
   void draw() {    
+    //draw graph
     for (int x = 0; x < DISPLAY_X; x++) {
       u8g2.drawPixel(x, this->graph[x]);  
     }
 
+    //draw bottom bar values
+    u8g2.setFont(u8g2_font_6x10_tr);
     u8g2.setCursor(0, DISPLAY_Y);
-    if (subItem == 0) {
-      u8g2.print(u8x8_u16toa(this->currentValue, 4));
-      u8g2.print(" ");
-    } else if (subItem == 1) {
-      u8g2.print(u8x8_u16toa(this->average, 4));
-      u8g2.print(" ");
-    } else if (subItem == 2) {
-      u8g2.print(millis());
-      u8g2.print(" ");
-    }
+    //u8g2.print(u8x8_u16toa(this->currentValue, 4));
+    //u8g2.print(" ");
+    u8g2.print(u8x8_u16toa(this->average, 4));
+    u8g2.print(" ");
+    u8g2.print(int(this->minValue));
+    u8g2.print(" ");
+    u8g2.print(int(this->maxValue));
+    u8g2.print(" ");
+    u8g2.print(millis());
+    u8g2.print(" ");
+
+    //min max values
+    u8g2.setFont(u8g2_font_5x7_tr);
+    u8g2.setCursor(0, 7);
+    u8g2.print(int(this->maxValue));
+    int y = this->graph[DISPLAY_X - 1];
+    if (y < 14) {y = 14;}
+    u8g2.setCursor(0, y);
+    u8g2.print(int(this->currentValue));
+    u8g2.print(" ");   
   } 
 };
 
@@ -118,17 +139,19 @@ class barItem : public item {
 public:
   int height;
 
-  barItem(char* name, int pid, int minValue, int maxValue) : item(name, pid, minValue, maxValue){
+  barItem(const char* name, int pid, int minValue, int maxValue) : item(name, pid){
 
     this->height = 0;
+    this->minValue = minValue;
+    this->maxValue = maxValue;
   }
 
-  void addValue(float val){
+  void addValue(float val) {
 
-    this->height = scaleValueToScreenY(val, this->minValue, this->maxValue);
+    this->height = scaleValueToScreenY(100 - val, this->minValue, this->maxValue);
   }
 
-  void draw(){
+  void draw() {
 
     u8g2.drawBox(DISPLAY_X, GRAPH_Y - this->height, BAR_WIDTH, this->height);
   }
@@ -139,7 +162,6 @@ item* items[ITEM_COUNT] = {};
 
 //times
 unsigned long lastFrame = 0;
-unsigned long lastSubSwap = 0;
 
 void setup(void) {
 
@@ -150,18 +172,14 @@ void setup(void) {
 #endif
 
   //display init
-  u8g2.begin();
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(u8g2_font_6x10_tn);
-    u8g2.setCursor(0, 0);
-    u8g2.print("INITIALISING");
-  } while ( u8g2.nextPage() );
+  u8g2.begin();  
 
   //config init
-  items[0] = new graphItem("RPM", PID_RPM, 0, 9000);
+  items[0] = new graphItem("RPM", PID_RPM);
+  items[0]->maxValue = 9000;
   //items[1] = new graphItem("KMH", PID_SPEED, 0, 210);
-  items[1] = new barItem("Load", PID_ENGINE_LOAD, 0, 100);
+  items[1] = new barItem("Throttle", PID_THROTTLE, 0, 100);
+  //items[2] = new graphItem("Oil Temp", PID_ENGINE_OIL_TEMP);
   
 #ifdef OBD_ON
   //obd init 
@@ -174,7 +192,7 @@ void loop(void) {
 
   //display if we arent going to overshoot the target fps
   unsigned long now = millis();
-  if (now - lastFrame > (1000 / TARGET_FPS)) {
+  if (now - lastFrame > TARGET_FPS) {
 
 #ifndef OBD_ON
     Serial.println(now - lastFrame);
@@ -185,30 +203,24 @@ void loop(void) {
 #ifdef OBD_ON
       int val = obdGetValue(items[i]->pid);
 #else
-      int val = random(items[i]->maxValue);  
+      int val = random(items[i]->maxValue);
 #endif
       items[i]->addValue(val);
     }
     
-    u8g2.firstPage();
-    do {
-      for (int i = 0; i < ITEM_COUNT; i++) {
-        if (items[i]->active) 
-          items[i]->draw();
-      }
-    } while ( u8g2.nextPage() );
-
-    //swap through sub displays
-    lastSubSwap += (now - lastFrame);
-    if (lastSubSwap > 5000) {
-      subItem++;
-      if (subItem > 2) {
-        subItem = 0;
-      }
-      lastSubSwap = 0;
+    u8g2.clearBuffer();
+    u8g2.drawHLine(0, GRAPH_Y, DISPLAY_X + BAR_WIDTH); // line between bottom section and graph
+    for (int i = 0; i < ITEM_COUNT; i++) {
+      if (items[i]->active) 
+        items[i]->draw();
     }
+    u8g2.sendBuffer();
 
     lastFrame = now;
   }
 }
 
+//acceleration map
+//composite item
+//allow switching between graphs
+//some sort of menu
