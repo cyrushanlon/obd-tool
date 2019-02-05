@@ -1,4 +1,5 @@
-#include "ILI9341_t3.h"
+#include <ILI9341_t3.h>
+#include <XPT2046_Touchscreen.h>
 #include <OBD2UART.h>
 
 //configuration
@@ -6,16 +7,22 @@
 #define DISPLAY_X 320 - BAR_WIDTH
 #define GRAPH_Y 200 //64
 #define DISPLAY_Y 240 //64
-#define TARGET_FPS 1000 / 60 //hz
+#define TARGET_FPS 1000 / 30 //hz
 #define ITEM_COUNT 4
 #define BG_COLOR ILI9341_BLACK
 //#define OBD_ON
 
 //hardware
 COBD obd;
+//display
 #define TFT_DC  9
 #define TFT_CS 10
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
+//touchscreen
+#define TOUCH_CS   8
+//#define TOUCH_TIRQ 2 //optional interupt pin
+XPT2046_Touchscreen ts(TOUCH_CS);//, TOUCH_TIRQ);
+
 
 int obdGetValue(int type) {
   
@@ -198,6 +205,10 @@ void setup(void) {
   tft.setRotation(1);
   tft.fillScreen(ILI9341_BLACK);
 
+  //touch init
+  ts.begin();
+  ts.setRotation(1);
+
   //config init
   items[0] = new barItem("Throttle", PID_THROTTLE, 0, 100, ILI9341_RED);
   items[0]->maxValue = 100;
@@ -223,8 +234,7 @@ int current = 1;
 void loop(void) {
 
   //display if we arent going to overshoot the target fps
-  unsigned long now = millis();
-  uint_fast8_t dt = now - lastFrame;
+  uint_fast8_t dt = millis() - lastFrame;
   if (dt > TARGET_FPS) {
 
   #ifndef OBD_ON
@@ -248,11 +258,9 @@ void loop(void) {
       }
     }
 
-    lastFrame = now;
-
-    //switch graph every 5 seconds
+    //switch graph with touch
     timeSinceSwitch += dt;
-    if (timeSinceSwitch > 5000) {
+    if (timeSinceSwitch > 500 && ts.touched()) { //500 ms debounce time
       items[current]->active = false;
       current++;
       if (current > ITEM_COUNT - 1) {
@@ -262,10 +270,11 @@ void loop(void) {
       timeSinceSwitch = 0;
       tft.fillScreen(BG_COLOR);
     }
+
+    lastFrame = millis();
   }
 }
 
 //acceleration map
 //composite item
-//allow switching between graphs
 //some sort of menu
