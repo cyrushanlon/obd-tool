@@ -8,9 +8,9 @@
 #define GRAPH_Y 200 //64
 #define DISPLAY_Y 240 //64
 #define TARGET_FPS 1000 / 60 //hz
-#define ITEM_COUNT 7
+#define ITEM_COUNT 3
 #define BG_COLOR ILI9341_BLACK
-#define OBD_ON
+//#define OBD_ON
 
 //hardware
 COBD obd;
@@ -32,11 +32,14 @@ float kmhToMPH(int* pidVals) {
   return float(pidVals[0]) * 0.621371;
 }
 
-float calcMPG(int* pidVals) {
+float calcMPGFromMAF(int* pidVals) {
   //MPH
   float speed = float(pidVals[0]) * 0.621371;
   //GPH
   float fuel = float(pidVals[1]) / 0.0805;
+  if (fuel == 0) { //divide by 0 is bad
+    fuel = 0.01;
+  }
   
   return speed / fuel;
 }
@@ -84,7 +87,6 @@ public:
       this->pidValues[i] = random(this->maxValue);
   #endif
     }
-    //do the transform?
     if (this->logic) {
       this->addValue(this->logic(this->pidValues));
     } else {
@@ -139,6 +141,7 @@ public:
       for (int i = 0; i < DISPLAY_X - 1; i++) {
         this->graph[i] = scaleValueToScreenY(this->values[i], this->minValue, this->maxValue);
       }
+      tft.fillScreen(BG_COLOR);
     }
 
     this->graph[DISPLAY_X - 1] = scaleValueToScreenY(val, this->minValue, this->maxValue);
@@ -231,47 +234,58 @@ void setup(void) {
   //display init
   tft.begin();  
   tft.setRotation(1);
-  tft.fillScreen(ILI9341_BLACK);
+  tft.fillScreen(ILI9341_RED);
+  tft.println("INIT");
 
   //touch init
+  tft.print("TOUCH...");
   ts.begin();
   ts.setRotation(1);
+  tft.println("OK");
 
   //config init
+  tft.print("CONFIG...");
   items[0] = new barItem("Throttle", 0, 100, ILI9341_RED, new int{PID_THROTTLE}, 1);
   items[0]->maxValue = 100;
 
   items[1] = new graphItem("RPM", ILI9341_YELLOW, new int{PID_RPM}, 1);
   //items[1]->maxValue = 9000;
   items[1]->active = true;
-
-  items[2] = new graphItem("Oil Temp", ILI9341_YELLOW, new int{PID_ENGINE_OIL_TEMP}, 1);
+/*
+  items[2] = new graphItem("Oil Temp", ILI9341_YELLOW, new int{PID_ENGINE_OIL_TEMP}, 1); //not supported on rx8
   //items[2]->maxValue = 250;
   items[2]->active = false;
-
+*/
+/*
   items[3] = new graphItem("MPH", ILI9341_YELLOW, new int{PID_SPEED}, 1);
   //items[3]->maxValue = 150;
   items[3]->logic = kmhToMPH;
   items[3]->active = false;
-
-  items[4] = new graphItem("MPG", ILI9341_YELLOW, new int[2]{PID_SPEED, PID_MAF_FLOW}, 2);
-  //items[4]->maxValue = 150;
-  items[4]->logic = calcMPG;
-  items[4]->active = false;
-   
-  items[5] = new graphItem("Fuel level", ILI9341_YELLOW, new int{PID_FUEL_LEVEL}, 1);
+  items[2] = new graphItem("Fuel level", ILI9341_YELLOW, new int{PID_FUEL_LEVEL}, 1);
   //items[5]->maxValue = 100;
-  items[5]->active = false;
+  items[2]->active = false;
+*/
 
-  items[6] = new graphItem("Fuel Usage", ILI9341_YELLOW, new int{PID_ENGINE_FUEL_RATE}, 1);
-  //items[6]->maxValue = 100;
-  items[6]->active = false;
-
+  items[2] = new graphItem("MPG", ILI9341_YELLOW, new int[2]{PID_SPEED, PID_MAF_FLOW}, 2);
+  //items[4]->maxValue = 150;
+  items[2]->logic = calcMPGFromMAF;
+  items[2]->active = false;
+/*
+  items[4] = new graphItem("Fuel Usage", ILI9341_YELLOW, new int{PID_ENGINE_FUEL_RATE}, 1); //not supported on rx8
+  items[4]->maxValue = 100;
+  items[4]->active = false;
+*/
+  tft.println("OK");
+  tft.print("OBD...");
   #ifdef OBD_ON
+  delay(2000);
   //obd init 
   obd.begin();
   while (!obd.init()); 
   #endif
+  tft.println("OK");
+  tft.setCursor(0,0);
+  tft.fillScreen(BG_COLOR);
 }
 
 unsigned long timeSinceSwitch = 0;
@@ -297,9 +311,6 @@ void loop(void) {
         items[i]->draw();
       }
     }
-    tft.setCursor(50, 8);
-    tft.print(dt);
-    tft.print(" ");
 
     //switch graph with touch
     timeSinceSwitch += dt;
@@ -319,5 +330,4 @@ void loop(void) {
 }
 
 //acceleration map
-//composite item
 //some sort of menu
