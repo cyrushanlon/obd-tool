@@ -5,10 +5,11 @@
 //configuration
 #define BAR_WIDTH 8
 #define DISPLAY_X 320 - BAR_WIDTH
-#define GRAPH_Y 200 //64
-#define DISPLAY_Y 240 //64
+#define GRAPH_Y 200
+#define GRAPH_THICKNESS 3
+#define DISPLAY_Y 240
 #define TARGET_FPS 1000 / 60 //hz
-#define ITEM_COUNT 3
+#define ITEM_COUNT 4
 #define BG_COLOR ILI9341_BLACK
 //#define OBD_ON
 
@@ -52,6 +53,7 @@ public:
   const char* name;
   float minValue;
   float maxValue;
+  float currentValue;
 
   const int pidCount;
   int pidValues[4];
@@ -69,6 +71,7 @@ public:
     this->name = name;
     this->minValue = 0;
     this->maxValue = 0;
+    this->currentValue = 0;
 
     this->pids = pids;
 
@@ -84,7 +87,9 @@ public:
         //TODO: oh no one failed what do we do?
       }
   #else
-      this->pidValues[i] = random(this->maxValue);
+      int val = this->currentValue + 1;
+      if (val > this->maxValue) val = 0;
+      this->pidValues[i] = val;
   #endif
     }
     if (this->logic) {
@@ -98,19 +103,20 @@ public:
 class graphItem : public item {
 public:
   
-  float average;
-  float currentValue;
-  
-  uint64_t  count;
+  float average = 0;
+
+  uint64_t  count = 0;
 
   int graph[DISPLAY_X];
   float values[DISPLAY_X];
   float lastRender[DISPLAY_X];
+
+  //used to reduce overdrawing
+  int lastCurrentYValue = 0;
+  int lastAverageYValue = 0;
+  int discardedYValue = 0;
   
   graphItem(const char* name, int color, int pids[], int pidCount) : item(name, color, pids, pidCount) {
-
-    this->average = 0;
-    this->count = 0;
 
     for (int i = 0; i < DISPLAY_X; i++) {
       this->graph[i] = GRAPH_Y;
@@ -124,6 +130,7 @@ public:
     this->average = this->average + ((val - this->average) / float(this->count));
 
     // move all values back and reinsert 128
+    discardedYValue = graph[0];
     for (int i = 0; i < DISPLAY_X - 1; i++) {
       this->graph[i] = this->graph[i + 1];
       this->values[i] = this->values[i + 1];
@@ -149,47 +156,57 @@ public:
 
   void draw() { 
 
-    //draw first line black to erase old value and text
-    // dont draw over min/max values as there is no reason to
-    tft.fillRect(0, 8, 24, GRAPH_Y - 16, BG_COLOR);
+    // draw background colour over the old stuff
+    // draw over old current value
+    tft.fillRect(0, this->lastCurrentYValue, 24, 7, BG_COLOR);
+    // draw over discarded value
+    tft.fillRect(0, discardedYValue, GRAPH_THICKNESS, GRAPH_THICKNESS, BG_COLOR);
+    // draw over average line
+    tft.drawFastHLine(0, this->lastAverageYValue, DISPLAY_X, BG_COLOR);
+    tft.drawFastHLine(0, this->lastAverageYValue - 1, DISPLAY_X, BG_COLOR);
 
     //draw graph
     for (int x = 0; x < DISPLAY_X; x++) {
-      tft.drawPixel(x, this->lastRender[x - 1], BG_COLOR);  
-      tft.drawPixel(x, this->graph[x], this->color);  
+      //tft.drawPixel(x, this->lastRender[x - 1], BG_COLOR);  
+      tft.drawRect(x + GRAPH_THICKNESS - 1, this->lastRender[x - 1], 1, GRAPH_THICKNESS, BG_COLOR);
+      //tft.drawPixel(x, this->graph[x], this->color);  
+      tft.drawRect(x, this->graph[x], GRAPH_THICKNESS, GRAPH_THICKNESS, this->color);
       lastRender[x] = graph[x];
     }
     
     //draw bottom bar values
     //name
     tft.setTextColor(ILI9341_YELLOW, BG_COLOR);
-    tft.setTextSize(2);
-    tft.setCursor(0, DISPLAY_Y - 20);
+    tft.setTextSize(4);
+    tft.setCursor(0, GRAPH_Y + GRAPH_THICKNESS + 5);
     tft.print(this->name);
 
-    //values
+    //values to display
     tft.setTextSize(1);
-    tft.setCursor(150, DISPLAY_Y - 24);
+    int infoX = DISPLAY_X - (10 * 6); //15 characters of 6 width
+    int infoY = GRAPH_Y + GRAPH_THICKNESS + 5;
+    tft.setCursor(infoX, infoY);
     tft.print(int(this->average));
-    tft.print(" ");
-    tft.print(int(this->minValue));
-    tft.print(" ");
-    tft.print(int(this->maxValue));
-    tft.print(" ");
+    tft.setCursor(infoX, infoY + 8);
     tft.print(millis());
-    tft.print(" ");
 
     //min max values
     tft.setCursor(0, 0);
     tft.print(int(this->maxValue));
-    tft.setCursor(0, GRAPH_Y - 8);
+    tft.setCursor(0, GRAPH_Y - 8 + GRAPH_THICKNESS);
     tft.print(int(this->minValue));
 
     int y = this->graph[DISPLAY_X - 1];
     if (y < 8) {y = 8;}
     if (y > GRAPH_Y - 16) {y = GRAPH_Y - 16;}
+    this->lastCurrentYValue = y; // this is the last y value that this was printed at
     tft.setCursor(0, y);
     tft.print(int(this->currentValue));
+
+    //draw line for average  
+    this->lastAverageYValue = scaleValueToScreenY(this->average, this->minValue, this->maxValue);
+    tft.drawFastHLine(0, this->lastAverageYValue, DISPLAY_X, ILI9341_RED);
+    tft.drawFastHLine(0, this->lastAverageYValue - 1, DISPLAY_X, ILI9341_RED);
   } 
 };
 
@@ -207,6 +224,7 @@ public:
   void addValue(float val) {
 
     this->height = scaleValueToScreenY(100 - val, this->minValue, this->maxValue);
+    this->currentValue = val;
   }
 
   void draw() {
@@ -233,44 +251,43 @@ void setup(void) {
 
   //display init
   tft.begin();  
-  tft.setRotation(1);
+  tft.setRotation(3);
   tft.fillScreen(ILI9341_RED);
   tft.println("INIT");
 
   //touch init
   tft.print("TOUCH...");
   ts.begin();
-  ts.setRotation(1);
+  ts.setRotation(3);
   tft.println("OK");
 
   //config init
   tft.print("CONFIG...");
   items[0] = new barItem("Throttle", 0, 100, ILI9341_RED, new int{PID_THROTTLE}, 1);
-  items[0]->maxValue = 100;
 
   items[1] = new graphItem("RPM", ILI9341_YELLOW, new int{PID_RPM}, 1);
-  //items[1]->maxValue = 9000;
+  items[1]->maxValue = 50;
   items[1]->active = true;
 /*
   items[2] = new graphItem("Oil Temp", ILI9341_YELLOW, new int{PID_ENGINE_OIL_TEMP}, 1); //not supported on rx8
   //items[2]->maxValue = 250;
   items[2]->active = false;
 */
-/*
-  items[3] = new graphItem("MPH", ILI9341_YELLOW, new int{PID_SPEED}, 1);
-  //items[3]->maxValue = 150;
-  items[3]->logic = kmhToMPH;
-  items[3]->active = false;
-  items[2] = new graphItem("Fuel level", ILI9341_YELLOW, new int{PID_FUEL_LEVEL}, 1);
-  //items[5]->maxValue = 100;
-  items[2]->active = false;
-*/
 
+  items[2] = new graphItem("MPH", ILI9341_YELLOW, new int{PID_SPEED}, 1);
+  items[2]->maxValue = 150;
+  items[2]->logic = kmhToMPH;
+  items[2]->active = false;
+
+  items[3] = new graphItem("Fuel level", ILI9341_YELLOW, new int{PID_FUEL_LEVEL}, 1);
+  items[3]->maxValue = 100;
+  items[3]->active = false;
+
+/*
   items[2] = new graphItem("MPG", ILI9341_YELLOW, new int[2]{PID_SPEED, PID_MAF_FLOW}, 2);
-  //items[4]->maxValue = 150;
   items[2]->logic = calcMPGFromMAF;
   items[2]->active = false;
-/*
+
   items[4] = new graphItem("Fuel Usage", ILI9341_YELLOW, new int{PID_ENGINE_FUEL_RATE}, 1); //not supported on rx8
   items[4]->maxValue = 100;
   items[4]->active = false;
@@ -305,7 +322,7 @@ void loop(void) {
       items[i]->obdGetValues();
     }
     
-    tft.drawFastHLine(0, GRAPH_Y, DISPLAY_X + BAR_WIDTH, ILI9341_BLUE); // line between bottom section and graph
+    tft.drawFastHLine(0, GRAPH_Y + GRAPH_THICKNESS - 1, DISPLAY_X + BAR_WIDTH, ILI9341_BLUE); // line between bottom section and graph
     for (int i = 0; i < ITEM_COUNT; i++) {
       if (items[i]->active) {
         items[i]->draw();
